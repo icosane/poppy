@@ -1,264 +1,142 @@
 #!/usr/bin/env python3
 """
-custom_arc.py - Extractor for the .arc format used by AirVelocity's version of LOVEPICAL-POPPY!.
+custom_arc.py (v2, corrected) - extract / pack / verify for the no-magic
+script.arc used by this engine (Switch ports).
 
-IMPORTANT: This is NOT the BGI/Ethornell "BURIKO ARC20" format. 
+FORMAT (verified byte-for-byte by rebuilding a real English script.arc):
+    0x00  uint32  data_start   = 8 + count * 72  (where file data begins)
+    0x04  uint32  count
+    0x08  count x 72-byte entries:
+              64 bytes  name, NUL-terminated, remaining bytes filled with 0xFE
+               4 bytes  size   (uint32 LE)
+               4 bytes  offset (uint32 LE, ABSOLUTE from start of the .arc)
+    data_start...  file contents. First file begins exactly at data_start.
+                   Each file is followed by one NUL byte, then zero padding so
+                   the next file starts on an 8-byte boundary. The last file
+                   ends exactly at end-of-archive (no terminator).
 
-Format (reverse-engineered from the sample file):
-    Index (no header/magic, starts at byte 0):
-        One 72-byte entry per file, count = index_size / 72 (determined by
-        scanning until entries stop looking like valid records):
-            4 bytes   size   (uint32 LE) - byte length of this file's content
-            4 bytes   offset (uint32 LE) - ABSOLUTE byte offset of this
-                       file's content, measured from the very start of the
-                       .arc file. NOTE: for the very first entry only, this
-                       field does not hold a valid offset (it's repurposed
-                       for something else) - the first file's content
-                       always starts immediately after the index instead.
-           64 bytes   filename, null-terminated, padded with 0xFE (not
-                       0x00!) after the terminator.
-    Data:
-        Files are stored back-to-back (in the same order as the index) each
-        followed by a few bytes of null padding before the next one starts.
-        There is also frequently one extra, undeclared chunk of data after
-        the last indexed file, running to the end of the .arc - this script
-        recovers it too, as "_trailing_chunk.bin".
+(v1 of this script misread the layout by one slot - it paired every name with
+the size/offset of the PREVIOUS file. Files extracted with v1 had wrong names
+and wrong boundaries, and packing them produced an archive whose real data was
+untouched. Use only this version.)
+
+Text inside the scripts is Shift-JIS (use cp932 in Python, a superset).
 
 Usage:
-    python3 custom_arc.py extract myfile.arc [output_dir]
-    python3 custom_arc.py list myfile.arc
+    python3 custom_arc.py list    script.arc
+    python3 custom_arc.py extract script.arc [out_dir]    (also writes _index.txt = file order)
+    python3 custom_arc.py pack    in_dir new.arc          (order from in_dir/_index.txt)
+    python3 custom_arc.py verify  script.arc              (extract -> repack in memory -> must be identical)
 """
-
 import os
 import struct
 import sys
 
+NAME_SIZE = 64
 ENTRY_SIZE = 72
-NAME_FIELD_SIZE = 64
-NAME_PAD_BYTE = 0xFE
+PAD_BYTE = 0xFE
 
 
-def parse_index(data):
-    """Scan from byte 0 for consecutive valid-looking 72-byte entries.
-    Returns (entries, index_size) where entries is a list of
-    (name, size, raw_offset_field)."""
+def parse(data):
+    if len(data) < 8:
+        raise ValueError("file too small")
+    data_start, count = struct.unpack_from("<II", data, 0)
+    if data_start != 8 + count * ENTRY_SIZE or count == 0 or count > 100000:
+        raise ValueError(f"header doesn't look right: data_start={data_start}, count={count} "
+                         f"(expected data_start == 8 + count*72)")
     entries = []
-    off = 0
-    while off + ENTRY_SIZE <= len(data):
-        size, raw_offset = struct.unpack_from("<II", data, off)
-        name_field = data[off + 8: off + ENTRY_SIZE]
-        nul = name_field.find(b"\x00")
-        if nul == -1:
-            break  # doesn't look like a name field -> index has ended
-        name_bytes = name_field[:nul]
-        if not name_bytes or any(b < 0x20 or b > 0x7E for b in name_bytes):
-            break  # not printable ASCII -> not a real entry
-        # padding after the null should be the 0xFE filler (allow a few
-        # exceptions in case the name runs right up to the edge)
-        entries.append((name_bytes.decode("ascii"), size, raw_offset))
-        off += ENTRY_SIZE
-    return entries, off
+    for k in range(count):
+        o = 8 + k * ENTRY_SIZE
+        raw = data[o:o + NAME_SIZE]
+        nul = raw.find(b"\x00")
+        if nul <= 0:
+            raise ValueError(f"entry {k}: bad name field")
+        name = raw[:nul].decode("ascii")
+        size, off = struct.unpack_from("<II", data, o + NAME_SIZE)
+        if off + size > len(data):
+            raise ValueError(f"entry {k} '{name}' runs past end of file")
+        entries.append((name, size, off))
+    return entries
 
 
-def resolve_offsets(entries, index_size):
-    """Work out each file's real absolute byte offset."""
-    offsets = []
-    for i, (name, size, raw_offset) in enumerate(entries):
-        if i == 0:
-            # first entry's offset field is not a real offset; its content
-            # always starts right after the index
-            offsets.append(index_size)
-        else:
-            # raw_offset is an ABSOLUTE offset from the start of the file
-            offsets.append(raw_offset)
-    return offsets
+def build(files):
+    """files: list of (name, bytes) in order -> archive bytes."""
+    n = len(files)
+    data_start = 8 + n * ENTRY_SIZE
+    offsets, cur = [], data_start
+    for i, (name, content) in enumerate(files):
+        offsets.append(cur)
+        cur += len(content)
+        if i < n - 1:
+            cur = (cur + 1 + 7) & ~7  # NUL terminator, then align to 8
+    out = bytearray(struct.pack("<II", data_start, n))
+    for (name, content), off in zip(files, offsets):
+        nb = name.encode("ascii")
+        if len(nb) >= NAME_SIZE:
+            raise ValueError(f"name too long: {name}")
+        out += nb + b"\x00" + bytes([PAD_BYTE]) * (NAME_SIZE - len(nb) - 1)
+        out += struct.pack("<II", len(content), off)
+    for (name, content), off in zip(files, offsets):
+        assert len(out) <= off
+        out += b"\x00" * (off - len(out))
+        out += content
+    return bytes(out)
 
 
-def extract(arc_path, out_dir):
-    with open(arc_path, "rb") as f:
-        data = f.read()
+def cmd_list(path):
+    d = open(path, "rb").read()
+    for name, size, off in parse(d):
+        print(f"{name:<32} size={size:<9} offset={off}")
 
-    entries, index_size = parse_index(data)
-    if not entries:
-        raise ValueError("No valid-looking index entries found at the start of this file")
 
-    offsets = resolve_offsets(entries, index_size)
-
+def cmd_extract(path, out_dir=None):
+    d = open(path, "rb").read()
+    ents = parse(d)
+    out_dir = out_dir or os.path.splitext(os.path.basename(path))[0] + "_extracted"
     os.makedirs(out_dir, exist_ok=True)
-
-    total_size = len(data)
-    last_end = 0
-    for (name, size, _raw), offset in zip(entries, offsets):
-        end = offset + size
-        if end > total_size:
-            print(f"WARNING: '{name}' would read past end of file "
-                  f"(offset={offset}, size={size}, file size={total_size}) - skipping")
-            continue
-        chunk = data[offset:end]
-        safe_name = os.path.basename(name.replace("\\", "/")) or f"unnamed_{offset:08x}"
-        with open(os.path.join(out_dir, safe_name), "wb") as out_f:
-            out_f.write(chunk)
-        print(f"extracted {name!r} ({size} bytes, offset {offset}) -> {safe_name}")
-        last_end = max(last_end, end)
-
-    # recover any undeclared trailing data (seen in the sample file)
-    if last_end < total_size:
-        trailing = data[last_end:total_size]
-        # skip a single leading null separator if present
-        if trailing[:1] == b"\x00":
-            trailing = trailing[1:]
-        trailing_path = os.path.join(out_dir, "_trailing_chunk.bin")
-        with open(trailing_path, "wb") as out_f:
-            out_f.write(trailing)
-        print(f"\nNOTE: found {len(trailing)} bytes of undeclared trailing data "
-              f"(not listed in the index) -> _trailing_chunk.bin")
-        print("Preview:", trailing[:80])
-
-    print(f"\nDone. {len(entries)} indexed file(s) processed, output in '{out_dir}'.")
+    for name, size, off in ents:
+        with open(os.path.join(out_dir, name), "wb") as f:
+            f.write(d[off:off + size])
+    with open(os.path.join(out_dir, "_index.txt"), "w", encoding="ascii") as f:
+        f.write("\n".join(n for n, _, _ in ents) + "\n")
+    print(f"extracted {len(ents)} files to {out_dir}/  (order saved in _index.txt)")
 
 
-def list_archive(arc_path):
-    with open(arc_path, "rb") as f:
-        data = f.read()
-    entries, index_size = parse_index(data)
-    offsets = resolve_offsets(entries, index_size)
-    for (name, size, raw), offset in zip(entries, offsets):
-        print(f"{name:<28} size={size:<10} offset={offset}")
-    print(f"\n{len(entries)} entries, index ends at byte {index_size}, file size {len(data)}")
+def cmd_pack(in_dir, out_path):
+    idx = os.path.join(in_dir, "_index.txt")
+    if os.path.exists(idx):
+        names = [l.strip() for l in open(idx, encoding="ascii") if l.strip()]
+    else:
+        names = sorted(n for n in os.listdir(in_dir) if os.path.isfile(os.path.join(in_dir, n)))
+        print("WARNING: no _index.txt; using alphabetical order (the game may care about order)")
+    files = [(n, open(os.path.join(in_dir, n), "rb").read()) for n in names]
+    arc = build(files)
+    open(out_path, "wb").write(arc)
+    print(f"packed {len(files)} files -> {out_path} ({len(arc)} bytes)")
 
 
-def pack(manifest_entries, out_path):
-    """Rebuild the .arc from a list of (name, content_bytes), in the exact
-    original order, plus one entry with name=None holding the trailing
-    chunk's bytes. Recomputes every offset from scratch (so edited files
-    of different lengths are handled correctly) and patches the hidden
-    8-byte pointer embedded in the first file's content so it keeps
-    pointing at the trailing chunk's new position/size.
-    """
-    trailing = None
-    real_entries = []
-    for name, content in manifest_entries:
-        if name is None:
-            trailing = content
-        else:
-            real_entries.append((name, content))
-    manifest_entries = real_entries
-    n = len(manifest_entries)
-    index_size = n * ENTRY_SIZE
-
-    offsets = []
-    cursor = index_size
-    for name, content in manifest_entries:
-        offsets.append(cursor)
-        cursor += len(content)
-    trailing_offset = cursor
-
-    if trailing is not None and manifest_entries:
-        first_name, first_content = manifest_entries[0]
-        if len(first_content) < 8:
-            raise ValueError(
-                f"First file '{first_name}' is under 8 bytes - can't patch the "
-                f"embedded trailing-chunk pointer. Something is wrong with this file."
-            )
-        patched_header = struct.pack("<II", len(trailing), trailing_offset)
-        first_content = patched_header + first_content[8:]
-        manifest_entries[0] = (first_name, first_content)
-
-    with open(out_path, "wb") as f:
-        # index
-        for i, ((name, content), offset) in enumerate(zip(manifest_entries, offsets)):
-            name_bytes = name.encode("ascii")
-            if len(name_bytes) >= NAME_FIELD_SIZE:
-                raise ValueError(f"Filename '{name}' too long for the 64-byte name field")
-            name_field = name_bytes + b"\x00" + bytes([NAME_PAD_BYTE]) * (NAME_FIELD_SIZE - len(name_bytes) - 1)
-            offset_field = n if i == 0 else offset  # entry0's offset slot holds the file count
-            f.write(struct.pack("<II", len(content), offset_field))
-            f.write(name_field)
-        # data
-        for name, content in manifest_entries:
-            f.write(content)
-        if trailing is not None:
-            f.write(trailing)
-
-    print(f"Packed {n} file(s) + trailing chunk ({len(trailing) if trailing else 0} bytes) "
-          f"into '{out_path}' ({os.path.getsize(out_path)} bytes total).")
-
-
-def pack_from_dir(in_dir, order_arc_path, out_path, encoding="shift_jis"):
-    """Convenience wrapper: read the original .arc just to recover the file
-    order and the trailing chunk, then read replacement content for each
-    named file from in_dir (falling back to the original if a file is
-    missing from in_dir), and pack.
-    encoding: the text encoding your edited .txt files are saved in
-    ("shift_jis" if you kept them as-is, "utf-8" if you converted them).
-    """
-    with open(order_arc_path, "rb") as f:
-        orig_data = f.read()
-    entries, index_size = parse_index(orig_data)
-    offsets = resolve_offsets(entries, index_size)
-
-    manifest = []
-    for (name, size, _raw), offset in zip(entries, offsets):
-        edited_path = os.path.join(in_dir, name)
-        if os.path.exists(edited_path):
-            with open(edited_path, "rb") as ef:
-                raw = ef.read()
-            if encoding.lower() != "shift_jis":
-                if manifest == []:  # this is entry 0
-                    prefix, rest = raw[:8], raw[8:]
-                    text = rest.decode(encoding)
-                    raw = prefix + text.encode("shift_jis")
-                else:
-                    text = raw.decode(encoding)
-                    raw = text.encode("shift_jis")
-            content = raw
-        else:
-            end = offset + size
-            content = orig_data[offset:end]
-        manifest.append((name, content))
-
-    total_size = len(orig_data)
-    last_name, last_size, _ = entries[-1]
-    last_offset = offsets[-1]
-    trailing_start = last_offset + last_size
-    trailing = orig_data[trailing_start:total_size]
-    if trailing[:1] == b"\x00":
-        trailing = trailing[1:]
-    trailing_edit_path = os.path.join(in_dir, "_trailing_chunk.bin")
-    if os.path.exists(trailing_edit_path):
-        with open(trailing_edit_path, "rb") as tf:
-            trailing = tf.read()
-    manifest.append((None, trailing))
-
-    pack(manifest, out_path)
+def cmd_verify(path):
+    d = open(path, "rb").read()
+    ents = parse(d)
+    rebuilt = build([(n, d[o:o + s]) for n, s, o in ents])
+    if rebuilt == d:
+        print(f"OK: {path} rebuilds byte-for-byte identical ({len(d)} bytes, {len(ents)} files)")
+    else:
+        i = next((i for i in range(min(len(d), len(rebuilt))) if d[i] != rebuilt[i]), None)
+        print(f"MISMATCH: sizes {len(d)} vs {len(rebuilt)}, first difference at byte {i}")
+        sys.exit(1)
 
 
 def main():
-    if len(sys.argv) < 3:
+    a = sys.argv[1:]
+    if len(a) < 2:
         print(__doc__)
         sys.exit(1)
-
-    command = sys.argv[1]
-    arc_path = sys.argv[2]
-
-    if command == "extract":
-        out_dir = sys.argv[3] if len(sys.argv) > 3 else os.path.splitext(os.path.basename(arc_path))[0] + "_extracted"
-        extract(arc_path, out_dir)
-    elif command == "list":
-        list_archive(arc_path)
-    elif command == "pack":
-        # python3 custom_arc.py pack <edited_dir> <original.arc> <output.arc> [encoding]
-        if len(sys.argv) < 5:
-            print("Usage: python3 custom_arc.py pack <edited_dir> <original.arc> <output.arc> [shift_jis|utf-8]")
-            sys.exit(1)
-        edited_dir = sys.argv[2]
-        original_arc = sys.argv[3]
-        output_arc = sys.argv[4]
-        encoding = sys.argv[5] if len(sys.argv) > 5 else "shift_jis"
-        pack_from_dir(edited_dir, original_arc, output_arc, encoding)
-    else:
-        print(f"Unknown command: {command}")
+    cmds = {"list": cmd_list, "extract": cmd_extract, "pack": cmd_pack, "verify": cmd_verify}
+    if a[0] not in cmds:
+        print(__doc__)
         sys.exit(1)
+    cmds[a[0]](*a[1:])
 
 
 if __name__ == "__main__":
