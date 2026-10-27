@@ -3,7 +3,7 @@
 All scripts sit in this one folder.<br>
 Extra packages are required only for two optional tools: `pip install pillow numpy fonttools`.
 
-> All the scripts in this repository were written and debugged by AI (ChatGPT, Claude). The scripts have been tested on an emulator and directed by a human. The Switch version has some lines that are not in the PC version—these were translated by AI. If you are not comfortable using AI-generated work, please skip this repository.
+> All the scripts in this repository were written and debugged by AI (ChatGPT, Claude). The Switch version has some lines that are not in the PC version—these were translated by AI. If you are not comfortable using AI-generated work, please skip this repository.
 
 > This repository contains Python tools and build instructions only. It does **not** include the game, the original `script.arc`, or the final translated script files. Use it with script files extracted from a legal copy of the game.
 
