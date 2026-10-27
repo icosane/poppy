@@ -7,13 +7,21 @@ Extra packages are required only for two optional tools: `pip install pillow num
 
 > This repository contains Python tools and build instructions only. It does **not** include the game, the original `script.arc`, or the final translated script files. Use it with script files extracted from a legal copy of the game.
 
-# Game version
+## Game version
 TitleID: `010008e02632e000` <br>
 Version: 1.0.0
 
-# Other games known to utilize the same engine
-#### Ren'ai 恋愛0キロメートル / Ren'ai 0 Kilometer Switch version <br>
+## Other games known to utilize the same engine
+### Ren'ai 恋愛0キロメートル / Ren'ai 0 Kilometer Switch version <br>
 Tested: unpacking `script.arc`
+
+---
+## Screenshots
+
+|   |   |   |
+| :--- | :---: | :---: |
+| ![1](./screenshots/_2026-10-27_22-05-44.png) | ![2](./screenshots/_2026-10-27_22-06-33.png) | ![2](./screenshots/_2026-10-28_00-06-38.png) |
+
 
 ---
 
