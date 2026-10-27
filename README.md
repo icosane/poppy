@@ -1,6 +1,6 @@
 # LOVEPICAL-POPPY! Switch translation toolkit (Switch script.arc + PC reference)
 
-All scripts sit in this one folder.<br>
+All scripts sit in one folder.<br>
 Extra packages are required only for two optional tools: `pip install pillow numpy fonttools`.
 
 > All the scripts in this repository were written and debugged by AI (ChatGPT, Claude [free versions lol]). The Switch version has some lines that are not in the PC version—these were translated by AI. If you are not comfortable using AI-generated work, please skip this repository.
