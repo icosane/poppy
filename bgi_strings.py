@@ -39,7 +39,7 @@ def _is_clean_text(s):
         return False
     if any(ch in s for ch in ("\ufffd",)):
         return False
-    printable = sum(1 for ch in s if ch.isprintable() or ch in "\r\n\t")
+    printable = sum(1 for ch in s if ch.isprintable() or ch.isspace())
     if printable / len(s) < 0.98:
         return False
     return True

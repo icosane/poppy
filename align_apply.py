@@ -12,8 +12,8 @@ Target file per row = basename of the row's switch_file; a trailing 'sw' before
 the extension is stripped (001_prologue_01sw.txt -> 001_prologue_01.txt).
 Override with --file NAME to apply every row to one file.
 
-Quotes: speech is written WITHOUT quotes by default; --wrap-quotes adds straight double quotes
-around lines whose Japanese is a speech line.
+Quotes: speech is written WITHOUT quotes by default. --quote-style ascii|curly|corner wraps lines whose
+Japanese is a speech line (use make_text_test.py first to see which style the engine displays).
 Safety: curly quotes/dashes are normalised to ASCII; '>' inside <text> and '"'
 inside history strings would break the tag, so they are replaced and reported;
 anything cp932 can't encode is reported and written as '?'.
@@ -58,9 +58,14 @@ def target_name(switch_file, override):
     return re.sub(r"sw(\.[^.]+)$", r"\1", b)
 
 
-def clean_en(en, kind, notes):
+QUOTES = {"ascii": ('"', '"'), "curly": ("\u201c", "\u201d"), "corner": ("\u300c", "\u300d")}
+
+
+def clean_en(en, kind, notes, wrap=None):
     for k, v in NORMALISE.items():
         en = en.replace(k, v)
+    if wrap and kind == "text" and en[:1] not in ('"', "\u201c", "\u300c"):
+        en = wrap[0] + en + wrap[1]
     if kind == "text" and ">" in en:
         en = en.replace(">", ")"); notes.append("'>' replaced with ')'")
     if kind == "history" and '"' in en:
@@ -78,6 +83,9 @@ def main():
     ap.add_argument("--src-dir", required=True)
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--file")
+    ap.add_argument("--quote-style", choices=["none", "ascii", "curly", "corner"], default="none",
+                    help="put quotes around English for lines whose Japanese is a speech line: "
+                         "ascii \"...\", curly (full-width) , corner = the original Japanese brackets")
     ap.add_argument("--wrap-quotes", action="store_true",
                     help="wrap english in straight double quotes when the Japanese line is a "
                          "speech line (off by default; test one speech line in-game first)")
@@ -111,9 +119,9 @@ def main():
             missing += 1
             continue
         notes = []
-        if a.wrap_quotes and r["japanese"].lstrip().startswith("「") and kind == "text" and not en.startswith('"'):
-            en = '"' + en + '"'
-        new_inner = clean_en(en, kind, notes)
+        style = "ascii" if (a.wrap_quotes and a.quote_style == "none") else a.quote_style
+        wrap = QUOTES.get(style) if r["japanese"].lstrip().startswith(("\u300c", "\u300e")) else None
+        new_inner = clean_en(en, kind, notes, wrap)
         new_tag = needle.replace(jp, new_inner, 1)
         buffers[name] = data[:pos] + new_tag + data[pos + len(needle):]
         cursors[name] = pos + len(new_tag)
