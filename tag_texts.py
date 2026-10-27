@@ -14,7 +14,7 @@ apply rewrites the scripts from a (possibly edited) tag_texts.tsv.
 Notes
   * Inside <select ...> a comma separates the options, so English labels must not contain ASCII commas.
     apply replaces any comma by a full-width one and tells you.
-  * Scene names keep the 【 】 brackets; digits become ASCII ("01").
+  * Scene names keep the 【 】 brackets; digits become ASCII ("01"). ASCII spaces are converted to ideographic spaces inside the tag because the game parser treats ASCII whitespace as the end of the scene-name field.
 
 Usage:
     python3 tag_texts.py extract script_jp tag_texts.tsv [--name-map name_map.tsv]
@@ -141,7 +141,7 @@ def cmd_apply(tsv, src, out):
         if en is None:
             return m.group(0)
         n_scene += 1
-        return "<autosaverange " + en + ">"
+        return "<autosaverange " + en.replace(" ", "　") + ">"
 
     def select_sub(m):
         nonlocal n_choice

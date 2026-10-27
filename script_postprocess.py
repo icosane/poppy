@@ -110,6 +110,17 @@ def process(data, mapping, a, steps, stats):
             stats["default_name"] += 1
             return m.group(1) + family + "," + given + m.group(4)
         text = DEFAULT_NAME.sub(dn_sub, text)
+    # --- quotes: ASCII double quotes are invisible/problematic in the tested Switch runtime. ---
+    # Only change visible translated <text ...> lines; do not touch script syntax or Japanese lines.
+    if a.quotes == "single":
+        out_lines = []
+        for line in text.split("\r\n"):
+            if line.startswith("<text ") and not has_japanese(line):
+                if '"' in line:
+                    line = line.replace('"', "'")
+                    stats["quotes"] += 1
+            out_lines.append(line)
+        text = "\r\n".join(out_lines)
     # --- commas: the engine drops ASCII commas inside <text ...> (see make_text_test.py) ---
     if a.comma != "keep":
         out_lines = []
@@ -177,6 +188,8 @@ def main():
     ap.add_argument("--names-only", action="store_true", help="skip all text-size changes (names, default name and commas still apply)")
     ap.add_argument("--default-name", default="Yaotome,Tetsuya",
                     help='default player name as "Family,Given" written into <setdefaultname> (default Yaotome,Tetsuya; "" = leave as is)')
+    ap.add_argument("--quotes", choices=["single", "keep"], default="single",
+                    help="replace ASCII double quotes with single quotes in translated text (default: single)")
     ap.add_argument("--comma", choices=["halfwidth", "fullwidth", "fullwidth-tight", "backslash", "quote", "keep"], default="fullwidth",
                     help="how to write commas inside <text> lines (default halfwidth: a half-em comma, keep the space after it)")
     a = ap.parse_args()
@@ -197,7 +210,7 @@ def main():
     if skipped:
         print(f"note: ignored protagonist-token rows in the name map ({', '.join(sorted(set(skipped)))}) - they must stay as they are")
 
-    stats = {"names": 0, "default_name": 0, "commas": 0, "shrunk": 0, "injected": 0, "by_size": {}}
+    stats = {"names": 0, "default_name": 0, "commas": 0, "quotes": 0, "shrunk": 0, "injected": 0, "by_size": {}}
     long_lines = []
     tok_before = tok_after = 0
     changed = 0
@@ -218,7 +231,7 @@ def main():
                 changed += 1
     print(f"changed {changed} file(s) in {out}")
     print(f"speaker-name tags translated: {stats['names']}")
-    print(f"default player name set ({a.default_name or 'unchanged'}): {stats['default_name']} tag(s);  lines with commas rewritten ({a.comma}): {stats['commas']}")
+    print(f"default player name set ({a.default_name or 'unchanged'}): {stats['default_name']} tag(s); lines with commas rewritten ({a.comma}): {stats['commas']}; lines with double quotes converted ({a.quotes}): {stats['quotes']}")
     if not a.names_only:
         print(f"existing explicit sizes lowered by {a.shrink}: {stats['shrunk']}")
         if a.base:

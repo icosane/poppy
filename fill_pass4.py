@@ -1,8 +1,34 @@
-import csv, os
-root='/tmp/lovepical_v6_7_2_pass2'
-src=os.path.join(root,'review_all_filled_pass3.tsv')
-out=os.path.join(root,'review_all_filled_pass4.tsv')
-# Conservative translations of the remaining previously blank lines, in review order.
+#!/usr/bin/env python3
+"""Fill the remaining blank rows in a consolidated Pass 3 review TSV.
+
+By default reads review_all_filled_pass3.tsv from the current directory and
+writes review_all_filled_pass4.tsv beside it. Existing non-empty translations
+are preserved; the embedded Pass 4 translations are assigned to blank rows in
+file order. This is a historical, dataset-specific batch, not a general
+Japanese-to-English translator.
+"""
+import argparse
+import csv
+from pathlib import Path
+import sys
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "input", nargs="?", default="review_all_filled_pass3.tsv",
+        help="consolidated Pass 3 review TSV (default: %(default)s)",
+    )
+    parser.add_argument(
+        "output", nargs="?", default="review_all_filled_pass4.tsv",
+        help="output TSV (default: %(default)s)",
+    )
+    return parser.parse_args()
+
+
 translations = [
 "Ah... h-hey, don't copy me!",
 "Huh? Suzuka... special?",
@@ -264,14 +290,46 @@ translations = [
 "What's up? Why'd she suddenly stop—",
 "I don't even need to ask. I know she's waiting for that girl.",
 ]
-with open(src,encoding='utf-8-sig',newline='') as f:
-    reader=csv.DictReader(f,delimiter='\t'); fields=reader.fieldnames; rows=list(reader)
-blanks=[r for r in rows if not r['english_draft'].strip()]
-if len(blanks)!=len(translations):
-    raise SystemExit(f'Expected {len(blanks)} blanks, got {len(translations)} translations')
-for r,en in zip(blanks,translations):
-    r['english_draft']=en
-    r['status']='TRANSLATED (MANUAL PASS 4)'
-with open(out,'w',encoding='utf-8',newline='') as f:
-    w=csv.DictWriter(f,fieldnames=fields,delimiter='\t',lineterminator='\n'); w.writeheader(); w.writerows(rows)
-print('filled',len(blanks),'remaining',sum(not r['english_draft'].strip() for r in rows),'->',out)
+def main():
+    args = parse_args()
+    src = Path(args.input)
+    out = Path(args.output)
+    if not src.is_file():
+        print(f"ERROR: input file not found: {src}", file=sys.stderr)
+        return 2
+
+    with src.open(encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        fields = reader.fieldnames
+        if not fields or "english_draft" not in fields or "status" not in fields:
+            print("ERROR: input must be a review TSV with english_draft and status columns", file=sys.stderr)
+            return 2
+        rows = list(reader)
+
+    blanks = [r for r in rows if not (r.get("english_draft") or "").strip()]
+    if len(blanks) != len(translations):
+        print(
+            f"ERROR: expected {len(translations)} blank rows for this Pass 4 translation set; "
+            f"found {len(blanks)}. No output written.",
+            file=sys.stderr,
+        )
+        return 2
+
+    for row, english in zip(blanks, translations):
+        row["english_draft"] = english
+        row["status"] = "TRANSLATED (MANUAL PASS 4)"
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fields, delimiter="\t", lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+
+    remaining = sum(not (r.get("english_draft") or "").strip() for r in rows)
+    print(f"Filled {len(blanks)} blank row(s); {remaining} blank row(s) remain.")
+    print(f"Output: {out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

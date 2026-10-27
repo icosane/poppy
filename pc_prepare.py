@@ -1,57 +1,76 @@
 #!/usr/bin/env python3
-"""
-pc_prepare.py - batch helper for the PC (BGI/Ethornell) reference side.
+"""Batch-extract readable strings from BGI/Ethornell compiled scripts.
 
-Walks a folder of files extracted with bgi_arc.py, and for every compiled script
-(either 'DSC FORMAT 1.00' compressed, or already decompressed
-'BurikoCompiledScriptVer1.00') writes <name>_strings.txt: the readable strings,
-one per line, ready to feed to align_extract.py --pc.
-
-Usage:
-    python3 pc_prepare.py <extracted_dir> <out_dir>
-
-Files that are neither (images, sounds, ...) are skipped silently.
-Needs dsc_codec.py and bgi_strings.py in the same folder.
+Usage: python pc_prepare.py <extracted_dir> <out_dir>
+Only reads full file contents for files with the DSC/script magic header.
+Shows scan progress, so large folders containing images/audio don't look frozen.
 """
 import os
 import sys
-
 from dsc_codec import decompress, MAGIC
 from bgi_strings import extract_strings
 
 SCRIPT_MAGIC = b"BurikoCompiledScriptVer"
 
-
 def main():
     if len(sys.argv) != 3:
         print(__doc__)
-        sys.exit(1)
+        raise SystemExit(2)
     src, out = sys.argv[1], sys.argv[2]
+    if not os.path.isdir(src):
+        print(f"ERROR: input directory does not exist: {src}", file=sys.stderr)
+        raise SystemExit(2)
     os.makedirs(out, exist_ok=True)
-    done = 0
-    for root, _, files in os.walk(src):
+
+    candidates = []
+    scanned = 0
+    print(f"Scanning: {os.path.abspath(src)}", flush=True)
+    for root, dirs, files in os.walk(src):
+        dirs.sort()
         for name in sorted(files):
+            scanned += 1
             path = os.path.join(root, name)
             try:
-                data = open(path, "rb").read()
-            except OSError:
+                with open(path, 'rb') as f:
+                    header = f.read(16)
+            except OSError as e:
+                print(f"SKIP unreadable {path}: {e}", flush=True)
                 continue
+            if header == MAGIC or header.startswith(SCRIPT_MAGIC):
+                candidates.append((path, name))
+            if scanned % 250 == 0:
+                print(f"Scanned {scanned} files; found {len(candidates)} possible scripts...", flush=True)
+    print(f"Scan complete: {scanned} files, {len(candidates)} possible scripts. Extracting...", flush=True)
+
+    by_name = {}
+    for path, name in candidates:
+        by_name.setdefault(name, []).append(path)
+
+    done = 0
+    for i, (path, name) in enumerate(candidates, 1):
+        try:
+            with open(path, 'rb') as f:
+                data = f.read()
             if data[:16] == MAGIC:
-                try:
-                    data = decompress(data)
-                except Exception as e:  # keep going on a bad file
-                    print(f"SKIP {path}: {e}")
-                    continue
-            if data[:len(SCRIPT_MAGIC)] != SCRIPT_MAGIC:
+                data = decompress(data)
+            if not data.startswith(SCRIPT_MAGIC):
+                print(f"SKIP {path}: decompressed data lacks script header", flush=True)
                 continue
+            if len(by_name[name]) == 1:
+                out_name = name + "_strings.txt"
+            else:
+                rel_parent = os.path.relpath(os.path.dirname(path), src)
+                prefix = rel_parent.replace(os.sep, "__")
+                out_name = prefix + "__" + name + "_strings.txt"
             strings = extract_strings(data)
-            target = os.path.join(out, name + "_strings.txt")
-            with open(target, "w", encoding="utf-8") as f:
-                f.write("\n".join(strings) + "\n")
-            print(f"{path}: {len(strings)} strings -> {target}")
+            target = os.path.join(out, out_name)
+            with open(target, 'w', encoding='utf-8', newline='\n') as f:
+                f.write('\n'.join(strings) + ('\n' if strings else ''))
+            print(f"[{i}/{len(candidates)}] {path}: {len(strings)} strings -> {target}", flush=True)
             done += 1
-    print(f"done: {done} script file(s) processed")
+        except Exception as e:
+            print(f"ERROR {path}: {type(e).__name__}: {e}", flush=True)
+    print(f"Done: processed {done} script file(s); scanned {scanned} total files.", flush=True)
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
