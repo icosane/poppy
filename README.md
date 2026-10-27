@@ -18,9 +18,9 @@ Tested: unpacking `script.arc`
 ---
 ## Screenshots
 
-|   |   |   |
-| :--- | :---: | :---: |
-| ![1](./screenshots/_2026-10-27_22-05-44.png) | ![2](./screenshots/_2026-10-27_22-06-33.png) | ![2](./screenshots/_2026-10-28_00-06-38.png) |
+|   |   |   |   |
+| :--- | :---: | :---: | :---: |
+| ![1](./screenshots/_2026-10-27_22-05-44.png) | ![2](./screenshots/_2026-10-27_22-06-33.png) | ![3](./screenshots/_2026-10-28_00-06-38.png) | ![4](./screenshots/_2026-10-28_01-45-24.png) | 
 
 
 ---
