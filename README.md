@@ -1,4 +1,4 @@
-# LOVEPICAL-POPPY! Switch translation toolkit (Switch script.arc + PC reference)
+# LOVEPICAL-POPPY! Switch translation toolkit 
 
 All scripts sit in one folder.<br>
 Extra packages are required only for two optional tools: `pip install pillow numpy fonttools`.
